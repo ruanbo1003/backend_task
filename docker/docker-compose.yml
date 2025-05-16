@@ -17,6 +17,14 @@ services:
       - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     tty: true
 
+  backend_task_redis_local:
+    restart: unless-stopped
+    image: "redis:alpine"
+    container_name: backend_task_redis_local
+    ports:
+      - "6379:6379"
+    tty: true
+
   backend_task_api_local:
     restart: "no"
     image: "task_api:v1"
@@ -25,11 +33,28 @@ services:
       - backend_task_mongo_local
     environment:
       MONGODB_URL: "mongodb://user_api:abc123xyz@backend_task_mongo_local:27017?authSource=backend_assignment"
+      CELERY_BROKER_URL: "redis://backend_task_redis_local:6379/0"
+      CELERY_RESULT_BACKEND: "redis://backend_task_redis_local:6379/0"
     ports:
       - "8000:8000"
     volumes:
       - ../src/:/app/src
 #    command: sh -c "fastapi dev main.py --host 0.0.0.0 --port 8000"
     command: sh -c "fastapi dev main.py --host 0.0.0.0 --port 8000"
-
     tty: true
+
+#  backend_task_text2img_local:
+#    restart: "no"
+#    image: "task_api:v1"
+#    container_name: backend_task_text2img_local
+#    depends_on:
+#      - backend_task_mongo_local
+#      - backend_task_redis_local
+#    environment:
+#      MONGODB_URL: "mongodb://user_api:abc123xyz@backend_task_mongo_local:27017?authSource=backend_assignment"
+#      CELERY_BROKER_URL: "redis://backend_task_redis_local:6379/0"
+#      CELERY_RESULT_BACKEND: "redis://backend_task_redis_local:6379/0"
+#    volumes:
+#      - ../src/:/app/src
+#    command: celery -A src.tasks worker --loglevel=info
+#    tty: true
