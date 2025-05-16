@@ -1,0 +1,35 @@
+
+version: '3.9'
+
+services:
+  backend_task_mongo_local:
+    restart: unless-stopped
+    image: "arm64v8/mongo:8.0.5"
+    platform: linux/arm64/v8
+    container_name: backend_task_mongo_local
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root
+    ports:
+      - "27017:27017"
+#    command: [--auth]
+    volumes:
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    tty: true
+
+  backend_task_api_local:
+    restart: "no"
+    image: "task_api:v1"
+    container_name: backend_task_api_local
+    depends_on:
+      - backend_task_mongo_local
+    environment:
+      MONGODB_URL: "mongodb://user_api:abc123xyz@backend_task_mongo_local:27017?authSource=backend_assignment"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../src/:/app/src
+#    command: sh -c "fastapi dev main.py --host 0.0.0.0 --port 8000"
+    command: sh -c "fastapi dev main.py --host 0.0.0.0 --port 8000"
+
+    tty: true
