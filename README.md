@@ -32,3 +32,4 @@ docker build -t task_app:v1 -f docker/Dockerfile .
 ```shell
 docker compose -f docker/docker-compose.yml up
 ```
+alias setproxy='export http_proxy="127.0.0.1:7890" && export https_proxy="127.0.0.1:7890" && export no_proxy="localhost,127.0.0.1,::1"'
