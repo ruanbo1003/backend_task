@@ -4,7 +4,7 @@ import os
 from celery import Celery
 from const import TaskStatus
 from database import MongoUtil
-
+from logger import log_info, log_error
 
 
 # Celery configuration
@@ -31,7 +31,10 @@ async def do_text_to_image(task_id: str, username: str, prompt: str):
         # Update task status to pending
         result = await MongoUtil.update_task_status(task_id, TaskStatus.PENDING.value)
         if result.modified_count == 0:
-            print(f"Failed to update task {task_id} to pending status")
+            log_error("text2image", "update to done failed")
+        else:
+            log_info("text2image", "update to done")
+            return
 
         # TODO: run ComfyUI to generate image
         # result = comfyui_generate_image(task_id, prompt)
@@ -39,10 +42,13 @@ async def do_text_to_image(task_id: str, username: str, prompt: str):
         # Update task status to done
         result = await MongoUtil.update_task_status(task_id, TaskStatus.DONE.value, info="success")
         if result.modified_count == 0:
-            print(f"Failed to update task {task_id} to done status")
+            log_error("text2image", "update to done failed")
+        else:
+            log_info("text2image", "update to done")
 
     except Exception as e:
         # Update task status to error
+        log_error("text2image", f"task error: {str(e)}")
         await MongoUtil.update_task_status(task_id, TaskStatus.ERROR.value, info=str(e))
 
 
@@ -54,6 +60,8 @@ def is_gpu_available():
 @celery_app.task(bind=True, name='text2image', max_retries=3, default_retry_delay=10)
 def text2image(self, task_id: str, username: str, prompt: str):
     if not is_gpu_available():
+        log_error("text2image", "gpu un-available")
+
         if self.request.retries >= self.max_retries - 1:
             # Max retry, set the status to error
             asyncio.run(MongoUtil.update_task_status(task_id, TaskStatus.ERROR.value, "gpu busy"))

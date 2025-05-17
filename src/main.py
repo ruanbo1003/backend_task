@@ -1,6 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from typing import Any, Dict
+from typing import Any
 from pydantic import BaseModel, Field
 import datetime
 import uuid
@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from const import TaskStatus
 from tasks import text2image
 from database import MongoUtil
+from logger import log_info, log_error
 
 
 @asynccontextmanager
@@ -15,15 +16,15 @@ async def lifespan(app: FastAPI):
     # Startup
     try:
         await MongoUtil.ping()
-        print("Successfully connected to MongoDB")
+        log_info("app", "Successfully connected to MongoDB")
     except Exception as e:
-        print(f"Failed to connect to MongoDB: {str(e)}")
+        log_error("app", f"Failed to connect to MongoDB: {str(e)}")
     
     yield
     
     # Shutdown
     MongoUtil.close()
-    print("Closed MongoDB connection")
+    log_info("app", "Closed MongoDB connection")
 
 class GenerateRequest(BaseModel):
     username: str = Field(min_length=4, max_length=32)
@@ -41,6 +42,36 @@ class ApiResponse(JSONResponse):
 
 app = FastAPI(default_response_class=ApiResponse, lifespan=lifespan)
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+
+    # Get request body if it exists
+    body = None
+    if request.method in ["POST", "PUT", "PATCH"]:
+        try:
+            body = await request.json()
+        except:
+            body = await request.body()
+
+    log_info("api", {
+        "request_id": request_id,
+        "method": request.method,
+        "url": str(request.url),
+        "client_host": request.client.host if request.client else None,
+        "body": body
+    })
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Log response
+    log_info("api", {
+        "request_id": request_id,
+        "status_code": response.status_code
+    })
+    
+    return response
 
 # Get all tasks
 @app.get("/api/v1/tasks")
@@ -48,6 +79,7 @@ async def get_all_tasks():
     try:
         # Find all tasks and sort by created_at in descending order
         tasks = await MongoUtil.all_tasks()
+
         # Convert ObjectId to string and datetime to ISO format for JSON serialization
         for task in tasks:
             task["_id"] = str(task["_id"])
@@ -80,7 +112,7 @@ async def generate(request: GenerateRequest):
             "created_at": datetime.datetime.now(datetime.UTC),
             "status": TaskStatus.WAITING.value  # Initial status
         }
-
+        
         await MongoUtil.insert_one(document)
 
         # Send task to Celery
@@ -108,9 +140,10 @@ async def generate(request: GenerateRequest):
 @app.get("/api/v1/tasks/{task_id}")
 async def get_task_status(task_id: str):
     try:
-        task = await MongoUtil.find_one({"task_id": task_id})
-        if task:
-            return ApiResponse(content=task, message="success")
+        # 查询任务状态
+        document = await MongoUtil.find_one({"task_id": task_id})
+        if document:
+            return ApiResponse(content=document, message="success")
         else:
             return ApiResponse(content=None, code=4040, message="Task not found")
     except Exception as e:
@@ -121,11 +154,9 @@ async def get_task_status(task_id: str):
 @app.delete("/api/v1/tasks/{task_id}")
 async def delete_task(task_id: str):
     try:
-        result = await MongoUtil.update_one(
-            query={"task_id": task_id},
-            update={"$set": {"status": TaskStatus.CANCEL.value}}
-        )
-        if result.modified_count == 1:
+        # Find and delete the task
+        result = await MongoUtil.update_task_status(task_id, TaskStatus.CANCEL.value)
+        if result.deleted_count > 0:
             return ApiResponse(
                 content={"task_id": task_id},
                 message="success"
